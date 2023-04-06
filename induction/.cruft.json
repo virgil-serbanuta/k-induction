@@ -1,0 +1,18 @@
+{
+  "template": "https://github.com/runtimeverification/python-project-template",
+  "commit": "efd4db8b43e178767fa2006ab583e8ac2b259013",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "induction",
+      "project_slug": "induction",
+      "package_name": "induction",
+      "version": "0.1.0",
+      "description": "Induction for K",
+      "author_name": "Virgil and Traian Șerbănuță",
+      "author_email": "none",
+      "_template": "https://github.com/runtimeverification/python-project-template"
+    }
+  },
+  "directory": null
+}
