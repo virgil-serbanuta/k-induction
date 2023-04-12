@@ -10,6 +10,7 @@ from pyk.kast.outer import KAtt, KClaim, KDefinition, KFlatModule, KImport, KPro
 from pyk.kcfg.explore import KCFGExplore
 from pyk.kcfg.kcfg import KCFG
 from pyk.ktool.kompile import KompileBackend, kompile
+from pyk.ktool.kprint import KPrint, SymbolTable
 from pyk.ktool.kprove import KProve
 from pyk.prelude.kbool import andBool, notBool
 from pyk.prelude.kint import INT, intToken
@@ -33,6 +34,45 @@ INDUCTION_DEFINITION_FILE = f'{NEW_SEMANTICS_NAME}.k'
 WORK_DIR = BUILD_DIR / 'work'
 
 
+class MyKPrint(KPrint):
+    def __init__(
+        self,
+        definition_dir: Path,
+        use_directory: Optional[Path] = None,
+        bug_report: Optional[BugReport] = None,
+        extra_unparsing_modules: Iterable[KFlatModule] = (),
+    ) -> None:
+        super().__init__(definition_dir, use_directory, bug_report, extra_unparsing_modules)
+
+    @classmethod
+    def _patch_symbol_table(cls, symbol_table: SymbolTable) -> None:
+        symbol_table['_|->_'] = lambda c1, c2: f'({c1} |-> {c2})'
+        symbol_table['_Map_'] = lambda c1, c2: f'({c1} {c2})'
+
+        symbol_table['notBool_'] = lambda c1: f'notBool ({c1})'
+        symbol_table['_andBool_'] = lambda c1, c2: f'({c1}) andBool ({c2})'
+        symbol_table['_orBool_'] = lambda c1, c2: f'({c1}) orBool ({c2})'
+        symbol_table['_andThenBool_'] = lambda c1, c2: f'({c1}) andThenBool ({c2})'
+        symbol_table['_xorBool_'] = lambda c1, c2: f'({c1}) xorBool ({c2})'
+        symbol_table['_orElseBool_'] = lambda c1, c2: f'({c1}) orElseBool ({c2})'
+        symbol_table['_impliesBool_'] = lambda c1, c2: f'({c1}) impliesBool ({c2})'
+
+        symbol_table['~Int_'] = lambda c1: f'~Int ({c1})'
+        symbol_table['_modInt_'] = lambda c1, c2: f'({c1}) modInt ({c2})'
+        symbol_table['_*Int_'] = lambda c1, c2: f'({c1}) *Int ({c2})'
+        symbol_table['_/Int_'] = lambda c1, c2: f'({c1}) /Int ({c2})'
+        symbol_table['_%Int_'] = lambda c1, c2: f'({c1}) %Int ({c2})'
+        symbol_table['_^Int_'] = lambda c1, c2: f'({c1}) ^Int ({c2})'
+        symbol_table['_^%Int_'] = lambda c1, c2: f'({c1}) ^%Int ({c2})'
+        symbol_table['_+Int_'] = lambda c1, c2: f'({c1}) +Int ({c2})'
+        symbol_table['_-Int_'] = lambda c1, c2: f'({c1}) -Int ({c2})'
+        symbol_table['_>>Int_'] = lambda c1, c2: f'({c1}) >>Int ({c2})'
+        symbol_table['_<<Int_'] = lambda c1, c2: f'({c1}) <<Int ({c2})'
+        symbol_table['_&Int_'] = lambda c1, c2: f'({c1}) &Int ({c2})'
+        symbol_table['_xorInt_'] = lambda c1, c2: f'({c1}) xorInt ({c2})'
+        symbol_table['_|Int_'] = lambda c1, c2: f'({c1}) |Int ({c2})'
+
+
 def kompile_semantics() -> None:
     print('Kompiling...', flush=True)
     _ = kompile(
@@ -46,11 +86,18 @@ def kompile_semantics() -> None:
     print('Kompile done.', flush=True)
 
 
-def create_kprove(definition_dir:Path) -> KProve:
+def create_kprove(definition_dir: Path) -> KProve:
     print('Loading the definition...', flush=True)
     kprove = KProve(definition_dir, bug_report=None)
     print('Done loading.', flush=True)
     return kprove
+
+
+def create_printer(definition_dir: Path) -> KPrint:
+    print('Loading the definition...', flush=True)
+    kprint = MyKPrint(definition_dir, bug_report=None)
+    print('Done loading.', flush=True)
+    return kprint
 
 
 def load_claims(kprove: KProve) -> List[KClaim]:
@@ -98,7 +145,9 @@ def create_induction_modules(claims: List[KClaim], temporary_directory: Path) ->
         klabel=symbol_name,
         att=KAtt(atts={'function': '', 'total': '', 'klabel': symbol_name, 'symbol': '', 'no-evaluators': ''}),
     )
-    rule = KRule(body=claim.body, requires=mlAnd([claim.requires, var_constraints]), ensures=claim.ensures)
+    assert isinstance(claim.body, KApply)
+    inner_body = claim.body.args[0]
+    rule = KRule(body=inner_body, requires=mlAnd([claim.requires, var_constraints]), ensures=claim.ensures)
     new_claim = KClaim(
         body=replace_var(claim.body, var_name, symbol_term),
         requires=replace_var(claim.requires, var_name, symbol_term),
@@ -137,7 +186,7 @@ def kompile_induction(definition: KDefinition, printer: KPrint, temporary_direct
     print('Kompiling induction module...', flush=True)
     kompiled_dir = kompile(
         definition_file,
-        output_dir=temporary_directory,
+        output_dir=temporary_directory / 'induction-kompile',
         backend=KompileBackend.HASKELL,
         main_module=NEW_SEMANTICS_NAME.upper(),
         syntax_module=f'{NEW_SEMANTICS_NAME.upper()}-SYNTAX',
@@ -155,6 +204,10 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
 
     for current_claim in claims:
         kcfg_explore = KCFGExplore(kprove)
+        print('Proving:')
+        print(kprove.pretty_print(current_claim.body))
+        print('requires ', kprove.pretty_print(current_claim.requires))
+        print('ensures ', kprove.pretty_print(current_claim.ensures))
         kcfg = KCFG.from_claim(kprove.definition, current_claim)
         init = kcfg.get_unique_init()
         new_init_term = kcfg_explore.cterm_assume_defined(init.cterm)
@@ -170,13 +223,12 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
 
         failed_nodes = len(kcfg.frontier) + len(kcfg.stuck)
         assert failed_nodes == 0
-        pass
 
 
 def main(args: List[str]) -> None:
     kompile_semantics()
     kprove = create_kprove(DEFINITION_DIR)
-    printer = kprove
+    printer = create_printer(DEFINITION_DIR)
     claims = load_claims(kprove)
     claims_with_modules = create_induction_modules(claims, WORK_DIR)
     for claim, definition in claims_with_modules:
