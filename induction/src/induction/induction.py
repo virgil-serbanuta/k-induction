@@ -7,11 +7,14 @@ from typing import TYPE_CHECKING, List, Tuple
 
 from pyk.kast.inner import KApply, KVariable, bottom_up
 from pyk.kast.outer import KAtt, KClaim, KDefinition, KFlatModule, KImport, KProduction, KRequire, KRule, KTerminal
+from pyk.kcfg.explore import KCFGExplore
+from pyk.kcfg.kcfg import KCFG
 from pyk.ktool.kompile import KompileBackend, kompile
 from pyk.ktool.kprove import KProve
 from pyk.prelude.kbool import andBool, notBool
 from pyk.prelude.kint import INT, intToken
 from pyk.prelude.ml import mlAnd, mlEqualsTrue
+from pyk.proof.reachability import AGProof, AGProver
 
 if TYPE_CHECKING:
     from pyk.kast.inner import KInner
@@ -43,9 +46,9 @@ def kompile_semantics() -> None:
     print('Kompile done.', flush=True)
 
 
-def create_kprove() -> KProve:
+def create_kprove(definition_dir:Path) -> KProve:
     print('Loading the definition...', flush=True)
-    kprove = KProve(DEFINITION_DIR, bug_report=None)
+    kprove = KProve(definition_dir, bug_report=None)
     print('Done loading.', flush=True)
     return kprove
 
@@ -144,12 +147,35 @@ def kompile_induction(definition: KDefinition, printer: KPrint, temporary_direct
 
 
 def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
-    pass
+    kprove = create_kprove(definition_dir)
+    # claims = kprove.get_claims(
+    #     Path(spec_file), spec_module_name=spec_module, claim_labels=[f'{spec_module}.{claim_id}']
+    # )
+    claims = [claim]
+
+    for current_claim in claims:
+        kcfg_explore = KCFGExplore(kprove)
+        kcfg = KCFG.from_claim(kprove.definition, current_claim)
+        init = kcfg.get_unique_init()
+        new_init_term = kcfg_explore.cterm_assume_defined(init.cterm)
+        kcfg.replace_node(init.id, new_init_term)
+        prover = AGProver(AGProof(kcfg))
+        kcfg = prover.advance_proof(
+            'induction',
+            kcfg_explore,
+            max_iterations=1000,
+            execute_depth=100,
+            terminal_rules=[],
+        )
+
+        failed_nodes = len(kcfg.frontier) + len(kcfg.stuck)
+        assert failed_nodes == 0
+        pass
 
 
 def main(args: List[str]) -> None:
     kompile_semantics()
-    kprove = create_kprove()
+    kprove = create_kprove(DEFINITION_DIR)
     printer = kprove
     claims = load_claims(kprove)
     claims_with_modules = create_induction_modules(claims, WORK_DIR)
