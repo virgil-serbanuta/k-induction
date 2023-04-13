@@ -147,7 +147,9 @@ def create_induction_modules(claims: List[KClaim], temporary_directory: Path) ->
     )
     assert isinstance(claim.body, KApply)
     inner_body = claim.body.args[0]
-    rule = KRule(body=inner_body, requires=mlAnd([claim.requires, var_constraints]), ensures=claim.ensures)
+    # TODO: This is not a rule, since it's not something that takes 1 rewrite step.
+    # This is a reachability claim and should be modelled as such.
+    rule = KRule(body=inner_body, requires=andBool([claim.requires, var_constraints]), ensures=claim.ensures, att=KAtt({'priority' : '1', 'label' : 'induction-rule'}))
     new_claim = KClaim(
         body=replace_var(claim.body, var_name, symbol_term),
         requires=replace_var(claim.requires, var_name, symbol_term),
@@ -197,6 +199,7 @@ def kompile_induction(definition: KDefinition, printer: KPrint, temporary_direct
 
 def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
     kprove = create_kprove(definition_dir)
+    kprint = create_printer(definition_dir)
     # claims = kprove.get_claims(
     #     Path(spec_file), spec_module_name=spec_module, claim_labels=[f'{spec_module}.{claim_id}']
     # )
@@ -205,9 +208,9 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
     for current_claim in claims:
         kcfg_explore = KCFGExplore(kprove)
         print('Proving:')
-        print(kprove.pretty_print(current_claim.body))
-        print('requires ', kprove.pretty_print(current_claim.requires))
-        print('ensures ', kprove.pretty_print(current_claim.ensures))
+        print(kprint.pretty_print(current_claim.body))
+        print('requires ', kprint.pretty_print(current_claim.requires))
+        print('ensures ', kprint.pretty_print(current_claim.ensures))
         kcfg = KCFG.from_claim(kprove.definition, current_claim)
         init = kcfg.get_unique_init()
         new_init_term = kcfg_explore.cterm_assume_defined(init.cterm)
