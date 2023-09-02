@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
 
+from pyk.cli_utils import BugReport
 from pyk.kast.inner import KApply, KVariable, bottom_up
 from pyk.kast.outer import KAtt, KClaim, KDefinition, KFlatModule, KImport, KProduction, KRequire, KRule, KTerminal
 from pyk.kcfg.explore import KCFGExplore
@@ -32,7 +33,11 @@ DEFINITION_DIR = DEFINITION_PARENT / 'imp-kompiled'
 NEW_SEMANTICS_NAME = 'induction-rules'
 INDUCTION_DEFINITION_FILE = f'{NEW_SEMANTICS_NAME}.k'
 WORK_DIR = BUILD_DIR / 'work'
+BUG_REPORT_PATH = BUILD_DIR / 'bug-report'
 
+
+DEBUG_SERVER = False
+BUG_REPORT = True
 
 class MyKPrint(KPrint):
     def __init__(
@@ -206,7 +211,10 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
     claims = [claim]
 
     for current_claim in claims:
-        kcfg_explore = KCFGExplore(kprove)
+        kcfg_explore = KCFGExplore(
+            kprove,
+            port=39425 if DEBUG_SERVER else 0,
+            bug_report=BugReport(BUG_REPORT_PATH) if BUG_REPORT else None)
         print('Proving:')
         print(kprint.pretty_print(current_claim.body))
         print('requires ', kprint.pretty_print(current_claim.requires))
