@@ -5,22 +5,25 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
 
-from pyk.cli_utils import BugReport
-from pyk.kast.inner import KApply, KVariable, bottom_up
+from pyk.kast.inner import KApply, KToken, KVariable, bottom_up
 from pyk.kast.outer import KAtt, KClaim, KDefinition, KFlatModule, KImport, KProduction, KRequire, KRule, KTerminal
 from pyk.kcfg.explore import KCFGExplore
 from pyk.kcfg.kcfg import KCFG
+from pyk.kore.rpc import KoreClient, KoreServer
 from pyk.ktool.kompile import KompileBackend, kompile
-from pyk.ktool.kprint import KPrint, SymbolTable
+from pyk.ktool.kprint import KPrint
 from pyk.ktool.kprove import KProve
 from pyk.prelude.kbool import andBool, notBool
 from pyk.prelude.kint import INT, intToken
-from pyk.prelude.ml import mlAnd, mlEqualsTrue
-from pyk.proof.reachability import AGProof, AGProver
+from pyk.prelude.string import pretty_string
+from pyk.prelude.ml import mlEqualsTrue
+from pyk.proof.reachability import APRProof, APRProver
+from pyk.utils import BugReport
 
 if TYPE_CHECKING:
     from pyk.kast.inner import KInner
-    from pyk.ktool.kprint import KPrint
+    from pyk.kore.rpc import LogEntry
+    from pyk.ktool.kprint import SymbolTable
 
 
 ROOT = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip())
@@ -39,43 +42,33 @@ BUG_REPORT_PATH = BUILD_DIR / 'bug-report'
 DEBUG_SERVER = False
 BUG_REPORT = True
 
-class MyKPrint(KPrint):
-    def __init__(
-        self,
-        definition_dir: Path,
-        use_directory: Optional[Path] = None,
-        bug_report: Optional[BugReport] = None,
-        extra_unparsing_modules: Iterable[KFlatModule] = (),
-    ) -> None:
-        super().__init__(definition_dir, use_directory, bug_report, extra_unparsing_modules)
 
-    @classmethod
-    def _patch_symbol_table(cls, symbol_table: SymbolTable) -> None:
-        symbol_table['_|->_'] = lambda c1, c2: f'({c1} |-> {c2})'
-        symbol_table['_Map_'] = lambda c1, c2: f'({c1} {c2})'
+def patch_symbol_table(symbol_table: SymbolTable) -> None:
+    symbol_table['_|->_'] = lambda c1, c2: f'({c1} |-> {c2})'
+    symbol_table['_Map_'] = lambda c1, c2: f'({c1} {c2})'
 
-        symbol_table['notBool_'] = lambda c1: f'notBool ({c1})'
-        symbol_table['_andBool_'] = lambda c1, c2: f'({c1}) andBool ({c2})'
-        symbol_table['_orBool_'] = lambda c1, c2: f'({c1}) orBool ({c2})'
-        symbol_table['_andThenBool_'] = lambda c1, c2: f'({c1}) andThenBool ({c2})'
-        symbol_table['_xorBool_'] = lambda c1, c2: f'({c1}) xorBool ({c2})'
-        symbol_table['_orElseBool_'] = lambda c1, c2: f'({c1}) orElseBool ({c2})'
-        symbol_table['_impliesBool_'] = lambda c1, c2: f'({c1}) impliesBool ({c2})'
+    symbol_table['notBool_'] = lambda c1: f'notBool ({c1})'
+    symbol_table['_andBool_'] = lambda c1, c2: f'({c1}) andBool ({c2})'
+    symbol_table['_orBool_'] = lambda c1, c2: f'({c1}) orBool ({c2})'
+    symbol_table['_andThenBool_'] = lambda c1, c2: f'({c1}) andThenBool ({c2})'
+    symbol_table['_xorBool_'] = lambda c1, c2: f'({c1}) xorBool ({c2})'
+    symbol_table['_orElseBool_'] = lambda c1, c2: f'({c1}) orElseBool ({c2})'
+    symbol_table['_impliesBool_'] = lambda c1, c2: f'({c1}) impliesBool ({c2})'
 
-        symbol_table['~Int_'] = lambda c1: f'~Int ({c1})'
-        symbol_table['_modInt_'] = lambda c1, c2: f'({c1}) modInt ({c2})'
-        symbol_table['_*Int_'] = lambda c1, c2: f'({c1}) *Int ({c2})'
-        symbol_table['_/Int_'] = lambda c1, c2: f'({c1}) /Int ({c2})'
-        symbol_table['_%Int_'] = lambda c1, c2: f'({c1}) %Int ({c2})'
-        symbol_table['_^Int_'] = lambda c1, c2: f'({c1}) ^Int ({c2})'
-        symbol_table['_^%Int_'] = lambda c1, c2: f'({c1}) ^%Int ({c2})'
-        symbol_table['_+Int_'] = lambda c1, c2: f'({c1}) +Int ({c2})'
-        symbol_table['_-Int_'] = lambda c1, c2: f'({c1}) -Int ({c2})'
-        symbol_table['_>>Int_'] = lambda c1, c2: f'({c1}) >>Int ({c2})'
-        symbol_table['_<<Int_'] = lambda c1, c2: f'({c1}) <<Int ({c2})'
-        symbol_table['_&Int_'] = lambda c1, c2: f'({c1}) &Int ({c2})'
-        symbol_table['_xorInt_'] = lambda c1, c2: f'({c1}) xorInt ({c2})'
-        symbol_table['_|Int_'] = lambda c1, c2: f'({c1}) |Int ({c2})'
+    symbol_table['~Int_'] = lambda c1: f'~Int ({c1})'
+    symbol_table['_modInt_'] = lambda c1, c2: f'({c1}) modInt ({c2})'
+    symbol_table['_*Int_'] = lambda c1, c2: f'({c1}) *Int ({c2})'
+    symbol_table['_/Int_'] = lambda c1, c2: f'({c1}) /Int ({c2})'
+    symbol_table['_%Int_'] = lambda c1, c2: f'({c1}) %Int ({c2})'
+    symbol_table['_^Int_'] = lambda c1, c2: f'({c1}) ^Int ({c2})'
+    symbol_table['_^%Int_'] = lambda c1, c2: f'({c1}) ^%Int ({c2})'
+    symbol_table['_+Int_'] = lambda c1, c2: f'({c1}) +Int ({c2})'
+    symbol_table['_-Int_'] = lambda c1, c2: f'({c1}) -Int ({c2})'
+    symbol_table['_>>Int_'] = lambda c1, c2: f'({c1}) >>Int ({c2})'
+    symbol_table['_<<Int_'] = lambda c1, c2: f'({c1}) <<Int ({c2})'
+    symbol_table['_&Int_'] = lambda c1, c2: f'({c1}) &Int ({c2})'
+    symbol_table['_xorInt_'] = lambda c1, c2: f'({c1}) xorInt ({c2})'
+    symbol_table['_|Int_'] = lambda c1, c2: f'({c1}) |Int ({c2})'
 
 
 def kompile_semantics() -> None:
@@ -100,7 +93,7 @@ def create_kprove(definition_dir: Path) -> KProve:
 
 def create_printer(definition_dir: Path) -> KPrint:
     print('Loading the definition...', flush=True)
-    kprint = MyKPrint(definition_dir, bug_report=None)
+    kprint = KPrint(definition_dir, bug_report=None, patch_symbol_table=patch_symbol_table)
     print('Done loading.', flush=True)
     return kprint
 
@@ -119,14 +112,35 @@ def replace_var(term: KInner, var_name: str, replacement: KInner) -> KInner:
     return bottom_up(replace, term)
 
 
+def find_decreases(root: KInner) -> tuple[str, str, str]:
+    result: tuple[str, str, str] | None = None
+    def finder(node: KInner) -> KInner:
+        if not isinstance(node, KApply):
+            return node
+        if node.label.name != 'decreasesInduction':
+            return node
+        
+        nonlocal result
+        assert not result
+        assert node.arity == 3
+        result_list: list[str] = []
+        for child in node.args:
+            assert isinstance(child, KToken), 'decreasesInduction should have three string arguments'
+            assert child.sort.name == 'String', 'decreasesInduction should have three string arguments'
+            result_list.append(pretty_string(child))
+        assert len(result_list) == 3, 'decreasesInduction should have three string arguments'
+        result = (result_list[0], result_list[1], result_list[2])
+        return node
+
+    bottom_up(finder, root)
+    assert result, 'Decreases predicate not found'
+    return result
+
+
 def create_induction_modules(claims: List[KClaim], temporary_directory: Path) -> List[Tuple[KClaim, KDefinition]]:
     assert len(claims) == 1
     claim = claims[0]
-    assert 'decreases' in claim.att, [claim.att]
-    print(claim.att['decreases'])
-    decreases = claim.att['decreases']
-    pieces = tuple(a.strip() for a in decreases.split(','))
-    (var_name, measure_name, lowest_value) = pieces
+    (var_name, measure_name, lowest_value) = find_decreases(claim.requires)
     print((var_name, measure_name, lowest_value))
 
     symbol_name = f'symbol{var_name}'
@@ -154,7 +168,12 @@ def create_induction_modules(claims: List[KClaim], temporary_directory: Path) ->
     inner_body = claim.body.args[0]
     # TODO: This is not a rule, since it's not something that takes 1 rewrite step.
     # This is a reachability claim and should be modelled as such.
-    rule = KRule(body=inner_body, requires=andBool([claim.requires, var_constraints]), ensures=claim.ensures, att=KAtt({'priority' : '1', 'label' : 'induction-rule'}))
+    rule = KRule(
+        body=inner_body,
+        requires=andBool([claim.requires, var_constraints]),
+        ensures=claim.ensures,
+        att=KAtt({'priority': '1', 'label': 'induction-rule'}),
+    )
     new_claim = KClaim(
         body=replace_var(claim.body, var_name, symbol_term),
         requires=replace_var(claim.requires, var_name, symbol_term),
@@ -171,11 +190,11 @@ def create_induction_modules(claims: List[KClaim], temporary_directory: Path) ->
         sentences=[rule],
     )
 
-    # new_claim_module = KFlatModule(
-    #     name = f'{NEW_SEMANTICS_NAME.upper()}-SPEC',
-    #     imports = [KImport(new_semantics_module.name)],
-    #     sentences = [new_claim]
-    # )
+    new_claim_module = KFlatModule(
+        name = f'{NEW_SEMANTICS_NAME.upper()}-SPEC',
+        imports = [KImport(new_semantics_module.name)],
+        sentences = [new_claim]
+    )
 
     semantics_definition = KDefinition(
         new_semantics_module.name,
@@ -183,7 +202,7 @@ def create_induction_modules(claims: List[KClaim], temporary_directory: Path) ->
         all_modules=[new_semantics_module_syntax, new_semantics_module],
     )
 
-    return [(new_claim, semantics_definition)]
+    return [(new_claim, semantics_definition, new_claim_module)]
 
 
 def kompile_induction(definition: KDefinition, printer: KPrint, temporary_directory: Path) -> Path:
@@ -211,29 +230,35 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
     claims = [claim]
 
     for current_claim in claims:
-        kcfg_explore = KCFGExplore(
-            kprove,
-            port=39425 if DEBUG_SERVER else 0,
-            bug_report=BugReport(BUG_REPORT_PATH) if BUG_REPORT else None)
-        print('Proving:')
-        print(kprint.pretty_print(current_claim.body))
-        print('requires ', kprint.pretty_print(current_claim.requires))
-        print('ensures ', kprint.pretty_print(current_claim.ensures))
-        kcfg = KCFG.from_claim(kprove.definition, current_claim)
-        init = kcfg.get_unique_init()
-        new_init_term = kcfg_explore.cterm_assume_defined(init.cterm)
-        kcfg.replace_node(init.id, new_init_term)
-        prover = AGProver(AGProof(kcfg))
-        kcfg = prover.advance_proof(
-            'induction',
-            kcfg_explore,
-            max_iterations=1000,
-            execute_depth=100,
-            terminal_rules=[],
-        )
+        with (
+            KoreServer(definition_dir, kprint.main_module) as kore_server,
+            KoreClient(
+                'localhost',
+                port=39425 if DEBUG_SERVER else kore_server.port,
+                bug_report=BugReport(BUG_REPORT_PATH) if BUG_REPORT else None,
+            ) as kore_client,
+        ):
+            kcfg_explore = KCFGExplore(kprint, kore_client)
 
-        failed_nodes = len(kcfg.frontier) + len(kcfg.stuck)
-        assert failed_nodes == 0
+            print('Proving:')
+            print(kprint.pretty_print(current_claim.body))
+            print('requires ', kprint.pretty_print(current_claim.requires))
+            print('ensures ', kprint.pretty_print(current_claim.ensures))
+            print('With semantics:', definition_dir)
+            (kcfg, init_id, target_id) = KCFG.from_claim(kprove.definition, current_claim)
+            init = kcfg.node(init_id)
+            new_init_term = kcfg_explore.cterm_assume_defined(init.cterm)
+            kcfg.replace_node(init_id, new_init_term)
+            logs: dict[int, tuple[LogEntry, ...]] = {}
+            prover = APRProver(APRProof('my-id', kcfg, init=init_id, target=target_id, logs=logs), kcfg_explore)
+            kcfg = prover.advance_proof(
+                max_iterations=1000,
+                execute_depth=100,
+                terminal_rules=[],
+            )
+
+            failed_nodes = [node for node in kcfg.leaves if not node.id == target_id]
+            assert failed_nodes == 0
 
 
 def main(args: List[str]) -> None:
@@ -242,7 +267,8 @@ def main(args: List[str]) -> None:
     printer = create_printer(DEFINITION_DIR)
     claims = load_claims(kprove)
     claims_with_modules = create_induction_modules(claims, WORK_DIR)
-    for claim, definition in claims_with_modules:
+    for claim, definition, claim_module in claims_with_modules:
+        (WORK_DIR / f'{NEW_SEMANTICS_NAME}-spec.k').write_text(printer.pretty_print(claim_module))
         definition_dir = kompile_induction(definition, printer, WORK_DIR)
         run_induction_proof(claim, definition_dir)
 

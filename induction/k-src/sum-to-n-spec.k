@@ -21,7 +21,7 @@ module SUM-TO-N-SPEC
       andBool ValI <=Int ValN +Int 1
       andBool ValSum ==Int ValI *Int (ValI -Int 1) /Int 2
       andBool ValDecreasing ==Int ValN +Int 1 -Int ValI
-    [decreases(ValDecreasing, _>Int_, 0)]
+      andBool decreasesInduction("ValDecreasing", "_>Int_", "0")
 
 
 

@@ -65,6 +65,7 @@ semantics.
 module IMP
   imports IMP-SYNTAX
   imports DOMAINS
+  imports INDUCTION
 ```
 ### Semantics
 This module defines the semantics of **IMP**.
@@ -225,5 +226,13 @@ a computational step.
   rule <k> int (X,Xs => Xs);_ </k> <state> Rho:Map (.Map => X|->0) </state>
     requires notBool (X in keys(Rho))
   rule int .Ids; S => S  [structural]
+endmodule
+
+module INDUCTION
+  imports BOOL
+  imports STRING
+
+  syntax Bool ::= decreasesInduction(String, String, String)  [function, total, symbol, klabel(decreasesInduction)]
+  rule decreasesInduction(_:String, _:String, _:String) => true
 endmodule
 ```

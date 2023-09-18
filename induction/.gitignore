@@ -1,4 +1,8 @@
 /dist/
 __pycache__/
 .coverage
+.kore-repl-history
 .kprove-*
+.sessionCommands
+kore-exec.tar.gz
+kore-rpc.tar.gz
