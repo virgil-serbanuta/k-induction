@@ -15,8 +15,8 @@ from pyk.ktool.kprint import KPrint
 from pyk.ktool.kprove import KProve
 from pyk.prelude.kbool import andBool, notBool
 from pyk.prelude.kint import INT, intToken
-from pyk.prelude.string import pretty_string
 from pyk.prelude.ml import mlEqualsTrue
+from pyk.prelude.string import pretty_string
 from pyk.proof.reachability import APRProof, APRProver
 from pyk.utils import BugReport
 
@@ -114,12 +114,13 @@ def replace_var(term: KInner, var_name: str, replacement: KInner) -> KInner:
 
 def find_decreases(root: KInner) -> tuple[str, str, str]:
     result: tuple[str, str, str] | None = None
+
     def finder(node: KInner) -> KInner:
         if not isinstance(node, KApply):
             return node
         if node.label.name != 'decreasesInduction':
             return node
-        
+
         nonlocal result
         assert not result
         assert node.arity == 3
@@ -137,7 +138,9 @@ def find_decreases(root: KInner) -> tuple[str, str, str]:
     return result
 
 
-def create_induction_modules(claims: List[KClaim], temporary_directory: Path) -> List[Tuple[KClaim, KDefinition]]:
+def create_induction_modules(
+    claims: List[KClaim], temporary_directory: Path
+) -> List[Tuple[KClaim, KDefinition, KFlatModule]]:
     assert len(claims) == 1
     claim = claims[0]
     (var_name, measure_name, lowest_value) = find_decreases(claim.requires)
@@ -191,9 +194,7 @@ def create_induction_modules(claims: List[KClaim], temporary_directory: Path) ->
     )
 
     new_claim_module = KFlatModule(
-        name = f'{NEW_SEMANTICS_NAME.upper()}-SPEC',
-        imports = [KImport(new_semantics_module.name)],
-        sentences = [new_claim]
+        name=f'{NEW_SEMANTICS_NAME.upper()}-SPEC', imports=[KImport(new_semantics_module.name)], sentences=[new_claim]
     )
 
     semantics_definition = KDefinition(
@@ -209,7 +210,7 @@ def kompile_induction(definition: KDefinition, printer: KPrint, temporary_direct
     temporary_directory.mkdir(parents=True, exist_ok=True)
     definition_file = temporary_directory / INDUCTION_DEFINITION_FILE
     definition_file.write_text(printer.pretty_print(definition) + '\n\n')
-    print('Kompiling induction module...', flush=True)
+    print(f'Kompiling induction module: {definition_file} ...', flush=True)
     kompiled_dir = kompile(
         definition_file,
         output_dir=temporary_directory / 'induction-kompile',
