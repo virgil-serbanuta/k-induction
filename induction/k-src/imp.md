@@ -232,7 +232,7 @@ module INDUCTION
   imports BOOL
   imports STRING
 
-  syntax Bool ::= decreasesInduction(String, String, String)  [function, total, symbol, klabel(decreasesInduction)]
+  syntax Bool ::= decreasesInduction(String, String, String)  [function, total, symbol(decreasesInduction)]
   rule decreasesInduction(_:String, _:String, _:String) => true
 endmodule
 ```

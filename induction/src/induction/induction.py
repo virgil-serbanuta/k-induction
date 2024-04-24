@@ -169,7 +169,6 @@ def create_induction_modules(
     symbol_syntax = KProduction(
         sort=INT,
         items=[KTerminal(symbol_name), KTerminal('('), KTerminal(')')],
-        klabel=symbol_name,
         att=KAtt([Atts.FUNCTION(None), Atts.TOTAL(None), Atts.SYMBOL(symbol_name), NO_EVALUATORS(None)]),
     )
     assert isinstance(claim.body, KApply)
@@ -186,6 +185,7 @@ def create_induction_modules(
         body=replace_var(claim.body, var_name, symbol_term),
         requires=replace_var(claim.requires, var_name, symbol_term),
         ensures=replace_var(claim.ensures, var_name, symbol_term),
+        att=KAtt([Atts.LABEL('induction-claim')])
     )
 
     new_semantics_module_syntax = KFlatModule(
