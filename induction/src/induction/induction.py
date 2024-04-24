@@ -5,11 +5,13 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
 
+from pyk.cterm import CTermSymbolic
+from pyk.kast.att import _NONE, AttKey, Atts, KAtt
 from pyk.kast.inner import KApply, KToken, KVariable, bottom_up
-from pyk.kast.outer import KAtt, KClaim, KDefinition, KFlatModule, KImport, KProduction, KRequire, KRule, KTerminal
+from pyk.kast.outer import KClaim, KDefinition, KFlatModule, KImport, KProduction, KRequire, KRule, KTerminal
 from pyk.kcfg.explore import KCFGExplore
 from pyk.kcfg.kcfg import KCFG
-from pyk.kore.rpc import KoreClient, KoreServer
+from pyk.kore.rpc import KoreClient, kore_server
 from pyk.ktool.kompile import KompileBackend, kompile
 from pyk.ktool.kprint import KPrint
 from pyk.ktool.kprove import KProve
@@ -138,6 +140,9 @@ def find_decreases(root: KInner) -> tuple[str, str, str]:
     return result
 
 
+NO_EVALUATORS = AttKey('no-evaluators', type=_NONE)
+
+
 def create_induction_modules(
     claims: List[KClaim], temporary_directory: Path
 ) -> List[Tuple[KClaim, KDefinition, KFlatModule]]:
@@ -165,7 +170,7 @@ def create_induction_modules(
         sort=INT,
         items=[KTerminal(symbol_name), KTerminal('('), KTerminal(')')],
         klabel=symbol_name,
-        att=KAtt(atts={'function': '', 'total': '', 'klabel': symbol_name, 'symbol': '', 'no-evaluators': ''}),
+        att=KAtt([Atts.FUNCTION(None), Atts.TOTAL(None), Atts.SYMBOL(symbol_name), NO_EVALUATORS(None)]),
     )
     assert isinstance(claim.body, KApply)
     inner_body = claim.body.args[0]
@@ -175,7 +180,7 @@ def create_induction_modules(
         body=inner_body,
         requires=andBool([claim.requires, var_constraints]),
         ensures=claim.ensures,
-        att=KAtt({'priority': '1', 'label': 'induction-rule'}),
+        att=KAtt([Atts.PRIORITY('1'), Atts.LABEL('induction-rule')]),
     )
     new_claim = KClaim(
         body=replace_var(claim.body, var_name, symbol_term),
@@ -232,14 +237,15 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
 
     for current_claim in claims:
         with (
-            KoreServer(definition_dir, kprint.main_module) as kore_server,
+            kore_server(definition_dir, kprint.main_module) as k_server,
             KoreClient(
                 'localhost',
-                port=39425 if DEBUG_SERVER else kore_server.port,
+                port=39425 if DEBUG_SERVER else k_server.port,
                 bug_report=BugReport(BUG_REPORT_PATH) if BUG_REPORT else None,
             ) as kore_client,
         ):
-            kcfg_explore = KCFGExplore(kprint, kore_client)
+            cterm_symbolic = CTermSymbolic(kore_client, kprint.definition, kprint.kompiled_kore)
+            kcfg_explore = KCFGExplore(cterm_symbolic)
 
             print('Proving:')
             print(kprint.pretty_print(current_claim.body))
@@ -248,15 +254,17 @@ def run_induction_proof(claim: KClaim, definition_dir: Path) -> None:
             print('With semantics:', definition_dir)
             (kcfg, init_id, target_id) = KCFG.from_claim(kprove.definition, current_claim)
             init = kcfg.node(init_id)
-            new_init_term = kcfg_explore.cterm_assume_defined(init.cterm)
-            kcfg.replace_node(init_id, new_init_term)
+            new_init_term = cterm_symbolic.assume_defined(init.cterm, kprint.main_module)
+            old_node = kcfg.get_node(init_id)
+            assert old_node
+            kcfg.replace_node(old_node.let(cterm=new_init_term))
             logs: dict[int, tuple[LogEntry, ...]] = {}
-            prover = APRProver(APRProof('my-id', kcfg, init=init_id, target=target_id, logs=logs), kcfg_explore)
-            kcfg = prover.advance_proof(
+            proof = APRProof.from_claim(kprint.definition, claim, logs=logs)
+            prover = APRProver(proof, kcfg_explore)
+            prover.advance_proof(
                 max_iterations=1000,
-                execute_depth=100,
-                terminal_rules=[],
             )
+            kcfg = proof.kcfg
 
             failed_nodes = [node for node in kcfg.leaves if not node.id == target_id]
             assert failed_nodes == 0
